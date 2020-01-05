@@ -1,0 +1,100 @@
+version: '3.1'
+    
+networks:
+  monitor-net:
+    driver: bridge
+
+volumes:
+    prometheus_data: {}
+    grafana_data: {}
+
+services:
+
+  prometheus:
+    image: prom/prometheus:v2.15.1
+    container_name: prometheus
+    volumes:
+      - ./prometheus:/etc/prometheus
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    restart: unless-stopped
+    depends_on:
+      - alertmanager
+    expose:
+      - 9090
+    ports:
+      - 9090:9090
+    networks:
+      - monitor-net
+    labels:
+      org.label-schema.group: "monitoring"
+
+  alertmanager:
+    image: prom/alertmanager
+    volumes:
+      - ./config:/prometheus
+      - ./data/alertmanager:/data
+    command:
+      - '--config.file=/prometheus/alertmanager.yml'
+      - '--storage.path=/data'
+    ports:
+      - 9093:9093
+    networks:
+      - monitor-net
+      
+  node:
+    image: prom/node-exporter
+    ports:
+      - 9100:9100
+    restart: always
+    networks:
+      - monitor-net
+      
+  grafana:
+    image: grafana/grafana:5.1.0
+    depends_on:
+      - prometheus
+    environment: 
+      - GF_SERVER_ROOT_URL=http://192.168.99.100:3000
+      - GF_SECURITY_ADMIN_PASSWORD=123456
+      - TZ="America/Bahia"
+    ports:
+      - 3000:3000
+    user: "104"
+    
+  collectd:
+    image: prom/collectd-exporter
+    ports:
+      - 9103:9103
+    restart: always
+    networks:
+      - monitor-net
+    
+  alerta:
+    image: alerta/alerta-web
+    ports:
+      - 9080:8080
+    depends_on:
+      - db
+    environment:
+      - DEBUG=1  # remove this line to turn DEBUG off
+      - DATABASE_URL=mongodb://db:27017/monitoring
+      # - AUTH_REQUIRED=True
+      - ADMIN_USERS=admin@alerta.io
+      - PLUGINS=remote_ip,reject,heartbeat,blackout,prometheus
+      - ALERTMANAGER_API_URL=http://alertmanager:9093
+    restart: always
+    networks:
+      - monitor-net  
+  db:
+    image: mongo:4.0.3
+    volumes:
+      - /data/db
+    networks:
+      - monitor-net
